@@ -1,0 +1,8 @@
+server:
+  global:
+    scrape_interval: 15s
+  service:
+    type: ClusterIP
+
+alertmanager:
+  enabled: false

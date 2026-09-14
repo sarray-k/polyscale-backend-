@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: polyscale-apps
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/example/polyscale.git
+        revision: HEAD
+        files:
+          - path: "applications/*/application.yaml"
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/polyscale.git
+        targetRevision: HEAD
+        path: '{{path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: payment-saas
+description: Blueprint SaaS de paiement
+version: 0.1.0
+appVersion: "1.0"

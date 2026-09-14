@@ -1,0 +1,8 @@
+from locust import HttpUser, task, between
+
+class PolyScaleUser(HttpUser):
+    wait_time = between(1, 3)
+
+    @task
+    def home(self):
+        self.client.get('/')
