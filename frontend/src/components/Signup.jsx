@@ -3,6 +3,8 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
 export default function Signup() {
   const { login } = useAuth();
   const { showToast } = useToast();
@@ -11,7 +13,7 @@ export default function Signup() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:3000/api/auth/signup', form);
+      const res = await axios.post(`${API_URL}/api/auth/signup`, form);
       login(res.data.user, res.data.token);
       showToast('Compte créé avec succès', 'success');
     } catch (err) {
