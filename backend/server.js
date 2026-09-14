@@ -53,8 +53,43 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-server = http.createServer(app);
+const requireRole = (...allowedRoles) => (req, res, next) => {
+  if (!req.user) return res.sendStatus(401);
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Accès refusé: permissions insuffisantes.' });
+  }
+  next();
+};
+
+const requireTenantAccess = (req, res, next) => {
+  if (!req.user || !req.user.tenant) return res.sendStatus(401);
+  next();
+};
+
+const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: '*' } });
+
+const logAuditEvent = (req, event, details = {}) => {
+  const payload = {
+    ...details,
+    ip: req?.ip || null,
+    userAgent: req?.get ? req.get('User-Agent') : null
+  };
+
+  db.run(
+    `INSERT INTO audit_logs (event, user_id, tenant, details, created_at)
+     VALUES (?, ?, ?, ?, datetime('now'))`,
+    [
+      event,
+      req?.user?.id || null,
+      req?.user?.tenant || null,
+      JSON.stringify(payload)
+    ],
+    (err) => {
+      if (err) console.error('Erreur audit log:', err.message);
+    }
+  );
+};
 
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
@@ -108,6 +143,15 @@ db.serialize(() => {
     active BOOLEAN DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event TEXT NOT NULL,
+    user_id INTEGER,
+    tenant TEXT,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
   db.run(`CREATE TABLE IF NOT EXISTS client_clusters (
@@ -173,6 +217,7 @@ app.post('/api/auth/signup', [
         process.env.JWT_SECRET || 'dev-secret',
         { expiresIn: '24h' }
       );
+      logAuditEvent(req, 'user_signup', { email, status, userId: this.lastID, discount });
       res.status(201).json({
         id: this.lastID,
         email,
@@ -202,6 +247,7 @@ app.post('/api/auth/login', [
       process.env.JWT_SECRET || 'dev-secret',
       { expiresIn: '24h' }
     );
+    logAuditEvent(req, 'user_login', { email, userId: user.id, tenant: user.tenant, role: user.role });
     res.json({
       token,
       user: {
@@ -216,7 +262,9 @@ app.post('/api/auth/login', [
   });
 });
 
-app.use('/api', authenticateToken);
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, service: 'polyscale-backend' });
+});
 
 app.get('/api/promotions', (req, res) => {
   db.run('UPDATE promotions SET active = 0 WHERE used_slots >= max_slots');
@@ -226,7 +274,39 @@ app.get('/api/promotions', (req, res) => {
   });
 });
 
-app.post('/api/clusters/register', async (req, res) => {
+app.use('/api', authenticateToken);
+
+app.get('/api/me', requireTenantAccess, (req, res) => {
+  res.json({
+    id: req.user.id,
+    email: req.user.email,
+    role: req.user.role,
+    tenant: req.user.tenant,
+    status: req.user.status
+  });
+});
+
+app.get('/api/admin/users', requireRole('admin'), (req, res) => {
+  db.all('SELECT id, email, role, tenant, status, createdAt FROM users ORDER BY createdAt DESC', (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.get('/api/admin/audit', requireRole('admin'), (req, res) => {
+  db.all(
+    'SELECT id, event, user_id, tenant, details, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 100',
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows.map((row) => ({
+        ...row,
+        details: row.details ? JSON.parse(row.details) : null
+      })));
+    }
+  );
+});
+
+app.post('/api/clusters/register', requireRole('client', 'admin'), async (req, res) => {
   const { clusterName, kubeconfig, apiServer, token } = req.body;
   const userId = req.user.id;
 
@@ -278,7 +358,7 @@ users:
 });
 
 const upload = multer({ dest: 'uploads/' });
-app.post('/api/blueprints/upload', upload.single('chart'), async (req, res) => {
+app.post('/api/blueprints/upload', requireRole('client', 'admin'), upload.single('chart'), async (req, res) => {
   const { name, description } = req.body;
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'Fichier manquant' });
@@ -304,6 +384,7 @@ app.post('/api/blueprints/upload', upload.single('chart'), async (req, res) => {
            VALUES (?, ?, ?)`,
           [this.lastID, version, destPath]
         );
+        logAuditEvent(req, 'blueprint_uploaded', { blueprintId: this.lastID, name, version, tenant: req.user.tenant });
         res.status(201).json({ id: this.lastID, name, version, chartPath: destPath });
       }
     );
@@ -314,7 +395,7 @@ app.post('/api/blueprints/upload', upload.single('chart'), async (req, res) => {
   }
 });
 
-app.post('/api/blueprints/generate', async (req, res) => {
+app.post('/api/blueprints/generate', requireRole('client', 'admin'), async (req, res) => {
   const { name, description, version } = req.body;
   const destPath = `./charts/${name}-${version || '1.0.0'}.tgz`;
   fs.writeFileSync(destPath, 'Placeholder chart content');
@@ -325,12 +406,13 @@ app.post('/api/blueprints/generate', async (req, res) => {
     [name, description || '', version || '1.0.0', destPath, req.user.tenant],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
+      logAuditEvent(req, 'blueprint_generated', { blueprintId: this.lastID, name, version, tenant: req.user.tenant });
       res.status(201).json({ id: this.lastID, name, version });
     }
   );
 });
 
-app.get('/api/blueprints', (req, res) => {
+app.get('/api/blueprints', requireRole('client', 'admin'), (req, res) => {
   const tenant = req.user.tenant;
   db.all('SELECT * FROM blueprints WHERE owner = ?', [tenant], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -338,7 +420,7 @@ app.get('/api/blueprints', (req, res) => {
   });
 });
 
-app.get('/api/blueprints/:id/versions', (req, res) => {
+app.get('/api/blueprints/:id/versions', requireRole('client', 'admin'), (req, res) => {
   const { id } = req.params;
   db.all('SELECT * FROM blueprint_versions WHERE blueprint_id = ? ORDER BY createdAt DESC', [id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -346,7 +428,7 @@ app.get('/api/blueprints/:id/versions', (req, res) => {
   });
 });
 
-app.post('/api/applications', async (req, res) => {
+app.post('/api/applications', requireRole('client', 'admin'), async (req, res) => {
   const { name, blueprint } = req.body;
   const userId = req.user.id;
   const tenant = req.user.tenant;
@@ -421,6 +503,7 @@ app.post('/api/applications', async (req, res) => {
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         io.emit('app-updated', { id: this.lastID, status: 'running' });
+        logAuditEvent(req, 'application_deployed', { applicationId: this.lastID, name, blueprint, namespace, tenant });
         res.status(201).json({ id: this.lastID, name, blueprint, status: 'running', namespace });
       }
     );
@@ -430,7 +513,7 @@ app.post('/api/applications', async (req, res) => {
   }
 });
 
-app.get('/api/applications', (req, res) => {
+app.get('/api/applications', requireRole('client', 'admin'), (req, res) => {
   const tenant = req.user.tenant;
   db.all('SELECT * FROM applications WHERE owner = ? ORDER BY createdAt DESC', [tenant], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -438,15 +521,16 @@ app.get('/api/applications', (req, res) => {
   });
 });
 
-app.delete('/api/applications/:id', (req, res) => {
+app.delete('/api/applications/:id', requireRole('client', 'admin'), (req, res) => {
   const { id } = req.params;
   db.run('DELETE FROM applications WHERE id = ? AND owner = ?', [id, req.user.tenant], function(err) {
     if (err) return res.status(500).json({ error: err.message });
+    logAuditEvent(req, 'application_deleted', { applicationId: id, tenant: req.user.tenant });
     res.json({ success: true });
   });
 });
 
-app.get('/api/applications/:id/metrics', (req, res) => {
+app.get('/api/applications/:id/metrics', requireRole('client', 'admin'), (req, res) => {
   res.json({
     cpu: Math.random() * 80 + 10,
     memory: Math.random() * 60 + 20,
@@ -454,10 +538,17 @@ app.get('/api/applications/:id/metrics', (req, res) => {
   });
 });
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 app.post('/api/ai/ask', async (req, res) => {
   const { message, context } = req.body;
+
+  if (!openai) {
+    return res.status(503).json({
+      error: 'Service IA désactivé: définissez OPENAI_API_KEY pour activer l’assistant.'
+    });
+  }
+
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
