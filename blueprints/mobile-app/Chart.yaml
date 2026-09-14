@@ -1,5 +1,6 @@
 apiVersion: v2
 name: mobile-app
-description: Blueprint d’application mobile
+description: Helm chart for a lightweight mobile app backend
 version: 0.1.0
-appVersion: "1.0"
+appVersion: "1.0.0"
+type: application

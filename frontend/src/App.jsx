@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import { useAuth } from './context/AuthContext.jsx';
+import { ToastView } from './components/Toast.jsx';
 import Login from './components/Login.jsx';
 import Signup from './components/Signup.jsx';
 import Pricing from './components/Pricing.jsx';
@@ -9,27 +11,31 @@ import BlueprintEditor from './components/BlueprintEditor.jsx';
 import AIAssistant from './components/AIAssistant.jsx';
 import Help from './components/Help.jsx';
 
-function AppShell() {
-  const { user, logout } = useAuth();
+function PublicLayout() {
   const [view, setView] = useState('pricing');
 
-  if (!user) {
-    return (
-      <div style={styles.page}>
-        <div style={styles.authCard}>
-          <h1>PolyScale</h1>
-          <div style={styles.tabs}>
-            <button style={styles.tab} onClick={() => setView('login')}>Connexion</button>
-            <button style={styles.tab} onClick={() => setView('signup')}>Inscription</button>
-            <button style={styles.tab} onClick={() => setView('pricing')}>Tarifs</button>
-          </div>
-          {view === 'login' && <Login />}
-          {view === 'signup' && <Signup />}
-          {view === 'pricing' && <Pricing />}
+  return (
+    <div style={styles.page}>
+      <div style={styles.authCard}>
+        <h1>PolyScale</h1>
+        <div style={styles.tabs}>
+          <button style={styles.tab} onClick={() => setView('login')}>Connexion</button>
+          <button style={styles.tab} onClick={() => setView('signup')}>Inscription</button>
+          <button style={styles.tab} onClick={() => setView('pricing')}>Tarifs</button>
+          <button style={styles.tab} onClick={() => setView('promo')}>Promotions</button>
         </div>
+        {view === 'login' && <Login />}
+        {view === 'signup' && <Signup />}
+        {view === 'pricing' && <Pricing />}
+        {view === 'promo' && <PromoPage />}
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+function DashboardLayout() {
+  const { logout } = useAuth();
+  const [view, setView] = useState('editor');
 
   return (
     <div style={styles.dashboard}>
@@ -55,10 +61,21 @@ function AppShell() {
 }
 
 export default function App() {
+  const { user } = useAuth();
+
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <>
+      <Routes>
+        <Route path="/" element={user ? <DashboardLayout /> : <PublicLayout />} />
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/signup" element={user ? <Navigate to="/" replace /> : <Signup />} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/promo" element={<PromoPage />} />
+        <Route path="/help" element={<Help />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <ToastView />
+    </>
   );
 }
 
@@ -81,6 +98,7 @@ const styles = {
   },
   tabs: {
     display: 'flex',
+    flexWrap: 'wrap',
     gap: 12,
     marginBottom: 20
   },

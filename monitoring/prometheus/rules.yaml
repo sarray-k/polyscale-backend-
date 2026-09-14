@@ -1,13 +1,23 @@
 groups:
   - name: polyscale
     rules:
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le)) > 0.2
+        for: 5m
+        labels:
+          severity: warning
       - alert: HighCPUUsage
-        expr: avg(rate(container_cpu_usage_seconds_total[5m])) by (pod) > 0.8
+        expr: 100 * (avg(rate(container_cpu_usage_seconds_total[5m])) by (instance)) > 80
         for: 5m
         labels:
           severity: warning
       - alert: HighMemoryUsage
-        expr: avg(container_memory_usage_bytes) by (pod) > 700000000
+        expr: 100 * (avg(container_memory_usage_bytes / container_memory_limit_bytes) by (instance)) > 80
         for: 5m
         labels:
           severity: warning
+      - alert: ErrorRateHigh
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.005
+        for: 5m
+        labels:
+          severity: critical

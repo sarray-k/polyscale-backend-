@@ -1,26 +1,83 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: polyscale-argocd
+  name: polyscale-admin
+  namespace: argocd
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polyscale-developer
+  namespace: argocd
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polyscale-support
+  namespace: argocd
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: polyscale-argocd-role
+  name: polyscale-admin-role
 rules:
   - apiGroups: ["*"]
     resources: ["*"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: polyscale-developer-role
+rules:
+  - apiGroups: ["apps", "", "networking.k8s.io"]
+    resources: ["deployments", "services", "configmaps", "ingresses", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: polyscale-support-role
+rules:
+  - apiGroups: ["", "apps"]
+    resources: ["pods", "services", "deployments", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: polyscale-argocd-binding
+  name: polyscale-admin-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: polyscale-argocd-role
+  name: polyscale-admin-role
 subjects:
   - kind: ServiceAccount
-    name: polyscale-argocd
+    name: polyscale-admin
+    namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polyscale-developer-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: polyscale-developer-role
+subjects:
+  - kind: ServiceAccount
+    name: polyscale-developer
+    namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polyscale-support-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: polyscale-support-role
+subjects:
+  - kind: ServiceAccount
+    name: polyscale-support
     namespace: argocd

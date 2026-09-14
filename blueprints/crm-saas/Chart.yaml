@@ -1,5 +1,6 @@
 apiVersion: v2
 name: crm-saas
-description: Blueprint CRM SaaS
+description: Helm chart for a CRM SaaS application
 version: 0.1.0
-appVersion: "1.0"
+appVersion: "1.0.0"
+type: application

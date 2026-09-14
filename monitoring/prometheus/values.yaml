@@ -1,8 +1,22 @@
 server:
   global:
     scrape_interval: 15s
+    evaluation_interval: 15s
+  retention: "7d"
   service:
     type: ClusterIP
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 alertmanager:
-  enabled: false
+  enabled: true
+  persistence:
+    enabled: false
+
+pushgateway:
+  enabled: true

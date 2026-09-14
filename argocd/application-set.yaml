@@ -1,23 +1,31 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: polyscale-apps
+  name: polyscale-blueprints
 spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: https://github.com/example/polyscale.git
+        repoURL: https://github.com/sarray-k/polyscale-backend-
         revision: HEAD
-        files:
-          - path: "applications/*/application.yaml"
+        directories:
+          - path: blueprints/*
   template:
     metadata:
-      name: '{{name}}'
+      name: '{{ .path.basename }}'
     spec:
       project: default
       source:
-        repoURL: https://github.com/example/polyscale.git
+        repoURL: https://github.com/sarray-k/polyscale-backend-
         targetRevision: HEAD
-        path: '{{path}}'
+        path: '{{ .path.path }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
