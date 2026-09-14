@@ -11,13 +11,70 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const OpenAI = require('openai');
+const Stripe = require('stripe');
 const axios = require('axios');
 const k8s = require('@kubernetes/client-node');
 const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+
+const allowedOrigins = (process.env.CORS_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('CORS policy does not allow this origin'));
+  },
+  credentials: true
+}));
+
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) {
+    return res.status(503).json({ error: 'Stripe webhook non configuré: STRIPE_WEBHOOK_SECRET manquant.' });
+  }
+
+  const signature = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = Stripe.webhooks.constructEvent(req.body, signature, secret);
+  } catch (err) {
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const userId = Number(session.metadata?.userId || 0);
+    const plan = session.metadata?.plan || 'startup';
+
+    if (userId) {
+      db.run(
+        'UPDATE users SET status = ?, role = ? WHERE id = ?',
+        [plan, 'client', userId],
+        (updateErr) => {
+          if (updateErr) console.error('Erreur activation plan Stripe:', updateErr.message);
+        }
+      );
+
+      logAuditEvent({ user: { id: userId, tenant: 'default' }, ip: null, get: () => null }, 'stripe_checkout_completed', {
+        sessionId: session.id,
+        plan,
+        userId
+      });
+    }
+  }
+
+  res.json({ received: true });
+});
+
 app.use(express.json());
 
 const db = new sqlite3.Database('./database.db');
@@ -538,7 +595,52 @@ app.get('/api/applications/:id/metrics', requireRole('client', 'admin'), (req, r
   });
 });
 
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+
+app.post('/api/payments/create-checkout-session', requireRole('client', 'admin'), async (req, res) => {
+  if (!stripe) {
+    return res.status(503).json({ error: 'Checkout Stripe non activé: STRIPE_SECRET_KEY manquante.' });
+  }
+
+  const { plan = 'startup' } = req.body;
+  const priceByPlan = {
+    startup: { amount: 4900, currency: 'eur', name: 'PolyScale Starter' },
+    'scale-up': { amount: 9900, currency: 'eur', name: 'PolyScale Scale-Up' },
+    enterprise: { amount: 19900, currency: 'eur', name: 'PolyScale Enterprise' }
+  };
+
+  const selectedPlan = priceByPlan[plan] || priceByPlan.startup;
+  const successUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: req.user.email,
+      success_url: `${successUrl}/?payment=success&plan=${plan}`,
+      cancel_url: `${successUrl}/?payment=cancelled&plan=${plan}`,
+      line_items: [{
+        price_data: {
+          currency: selectedPlan.currency,
+          unit_amount: selectedPlan.amount,
+          product_data: { name: selectedPlan.name }
+        },
+        quantity: 1
+      }],
+      metadata: {
+        userId: String(req.user.id),
+        plan,
+        tenant: req.user.tenant || 'default'
+      }
+    });
+
+    logAuditEvent(req, 'stripe_checkout_session_created', { sessionId: session.id, plan, userId: req.user.id });
+    res.json({ id: session.id, url: session.url });
+  } catch (error) {
+    console.error('Erreur Stripe checkout:', error);
+    res.status(500).json({ error: 'Échec de la création de la session de paiement.' });
+  }
+});
 
 app.post('/api/ai/ask', async (req, res) => {
   const { message, context } = req.body;
