@@ -1,13 +1,23 @@
-# Runbook: Incident response
+# Runbook d'incident PolyScale
 
-## Situation
+## 1. Déploiement ArgoCD en échec
 
-If the application or cluster is degraded, verify logs, resource usage, and recent deployments.
+1. Vérifier l'état des pods ArgoCD dans le namespace `argocd`.
+2. Contrôler l'état de la connexion GitHub et la validité du repo cible.
+3. Vérifier les permissions RBAC associées au service account ArgoCD.
+4. Recharger ou resynchroniser l'application depuis l'interface ArgoCD.
+5. Vérifier les logs de l'agent de synchronisation et la présence de chart Helm valides.
 
-## Checklist
+## 2. Cluster client inaccessible
 
-1. Check backend logs.
-2. Check Kubernetes pod status.
-3. Validate database connectivity.
-4. Review OpenAI and secret configuration.
-5. Confirm deployment health and ingress availability.
+1. Vérifier la validité du kubeconfig ou du token JWT d'accès.
+2. Contrôler la connectivité réseau entre le backend et le cluster.
+3. Vérifier les permissions Kubernetes pour namespace, deployment et service.
+4. Revalider le secret de cluster stocké chiffré dans SQLite.
+
+## 3. Latence ou erreur élevée
+
+1. Vérifier les métriques Prometheus / Grafana.
+2. Inspecter la charge Locust sur les endpoints critiques.
+3. Vérifier les quotas CPU / RAM et les règles de rate limiting.
+4. Vérifier l'état des pods et des services backend / frontend.
